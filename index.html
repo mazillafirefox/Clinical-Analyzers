@@ -447,6 +447,8 @@ th .qm{background:#CFD0D2;color:#3C3F44}
         <div class="stats" id="readyStats"></div>
         <div class="visitbars" id="readyVisits"></div>
         <ul class="checks" id="readyChecks"></ul>
+        <div id="readyQc"></div>
+        <div style="margin:10px 0 2px"><button class="btn btn-light btn-sm" id="btnQcReady">Export full QC report (.csv)</button></div>
         <div class="golive">
           <button class="btn-go" id="btnAnalyze">Analyze data →</button>
           <label class="hint">Start at
@@ -480,7 +482,7 @@ th .qm{background:#CFD0D2;color:#3C3F44}
       </div>
     </div>
     <div class="privacy"><b>Your data stays on this device.</b> The spreadsheet is parsed in the browser; no server receives it. Please de-identify records before loading them.</div>
-    <div class="disclaimer">For clinical audit and education only. Not a registered medical device and not independently validated. Results depend entirely on the accuracy and completeness of the data provided; clinical judgement always applies.</div>
+    <div class="disclaimer">Validated research baseline. Includes import QC, analysis audit trail and source XLSX SHA-256 fingerprinting. Not a registered medical device. Results depend entirely on the accuracy and completeness of the data provided; clinical judgement always applies.</div>
   </div>
 </div>
 
@@ -499,6 +501,8 @@ th .qm{background:#CFD0D2;color:#3C3F44}
         <span id="cloudChip" hidden></span>
         <button class="btn btn-sm" id="btnCloudSync" hidden>Sync to database</button>
         <button class="btn btn-sm" id="btnSaveFile" hidden>Save data file</button>
+        <button class="btn btn-sm" id="btnQc">QC report</button>
+        <button class="btn btn-sm" id="btnAudit">Export audit</button>
         <button class="btn btn-sm" id="btnCsv">Export CSV</button>
         <button class="btn btn-sm btn-primary" id="btnPrint">Print / PDF</button>
       </div>
@@ -590,6 +594,8 @@ th .qm{background:#CFD0D2;color:#3C3F44}
    Refractive Outcomes Analyzer — core
    ============================================================ */
 'use strict';
+
+const APP_VERSION = 'Research v4.14';
 
 const VISITS = [
   {k:'d1',  label:'1 day',     en:'1 Day',    days:1},
@@ -833,6 +839,55 @@ function readSettings(wb){
   return s;
 }
 
+
+/* ---------- dataset fingerprint ---------- */
+function sha256Fallback(bytes){
+  const K=[
+    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+  ];
+  const rotr=(x,n)=>(x>>>n)|(x<<(32-n));
+  const l=bytes.length, bitHi=Math.floor((l*8)/0x100000000), bitLo=(l*8)>>>0;
+  const total=((l+9+63)>>6)<<6, msg=new Uint8Array(total); msg.set(bytes); msg[l]=0x80;
+  const dv=new DataView(msg.buffer); dv.setUint32(total-8,bitHi); dv.setUint32(total-4,bitLo);
+  let H=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+  const w=new Uint32Array(64);
+  for(let off=0;off<total;off+=64){
+    for(let i=0;i<16;i++)w[i]=dv.getUint32(off+i*4);
+    for(let i=16;i<64;i++){
+      const s0=(rotr(w[i-15],7)^rotr(w[i-15],18)^(w[i-15]>>>3))>>>0;
+      const s1=(rotr(w[i-2],17)^rotr(w[i-2],19)^(w[i-2]>>>10))>>>0;
+      w[i]=(w[i-16]+s0+w[i-7]+s1)>>>0;
+    }
+    let [a,b,c,d,e,f,g,h]=H;
+    for(let i=0;i<64;i++){
+      const S1=(rotr(e,6)^rotr(e,11)^rotr(e,25))>>>0, ch=((e&f)^((~e)&g))>>>0;
+      const t1=(h+S1+ch+K[i]+w[i])>>>0;
+      const S0=(rotr(a,2)^rotr(a,13)^rotr(a,22))>>>0, maj=((a&b)^(a&c)^(b&c))>>>0;
+      const t2=(S0+maj)>>>0;
+      h=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=b;b=a;a=(t1+t2)>>>0;
+    }
+    H=[(H[0]+a)>>>0,(H[1]+b)>>>0,(H[2]+c)>>>0,(H[3]+d)>>>0,
+       (H[4]+e)>>>0,(H[5]+f)>>>0,(H[6]+g)>>>0,(H[7]+h)>>>0];
+  }
+  return H.map(x=>x.toString(16).padStart(8,'0')).join('');
+}
+async function sha256Hex(buffer){
+  try{
+    if(window.crypto&&crypto.subtle){
+      const h=await crypto.subtle.digest('SHA-256',buffer);
+      return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join('');
+    }
+  }catch(_){}
+  return sha256Fallback(new Uint8Array(buffer));
+}
+
 function parseWorkbook(wb){
   const ws = wb.Sheets['Data'];
   if(!ws) throw new Error('No sheet named "Data" was found in this file.\nUse the Refractive Outcomes Data Template v2, or rename your data sheet to Data.');
@@ -852,6 +907,8 @@ function parseWorkbook(wb){
 
   const idx = {}; keys.forEach((k,i)=>{ if(k) idx[k]=i; });
   const get = (r,k) => idx[k]===undefined ? null : (r[idx[k]]===undefined?null:r[idx[k]]);
+  const qc = [];
+  const qadd = (severity,code,row,record,field,message)=>qc.push({severity,code,row,record:record||'',field:field||'',message});
   const N = settings.va_notation;
   const cylSign = settings.cyl_convention==='Plus' ? 'Plus' : 'Minus';
 
@@ -871,14 +928,56 @@ function parseWorkbook(wb){
   }
 
   const eyes = [];
+  const rawRecordCounts = new Map();
   for(let i=keyRow+1;i<rows.length;i++){
     const r = rows[i]||[];
+    const any = r.some(v=>v!==null&&v!==undefined&&String(v).trim()!=='');
+    if(!any) continue;
+    const rowNo=i+1;
     const pid = get(r,'patient_id'); const side = get(r,'side');
+    const rawRecord = get(r,'record_id');
+    if(rawRecord) rawRecordCounts.set(String(rawRecord),(rawRecordCounts.get(String(rawRecord))||0)+1);
+    const recordLabel = rawRecord ? String(rawRecord) : `${pid||'?'}-${side||'?'}`;
     const sdate = excelDate(get(r,'surgery_date'));
-    if(!pid || !side || !sdate) continue;
-    if(String(pid).trim().toUpperCase().startsWith('EXAMPLE')) continue;   // template sample row
+
+    if(!pid){ qadd('ERROR','MISSING_PATIENT_ID',rowNo,recordLabel,'patient_id','Row excluded: patient_id is required.'); continue; }
+    if(!side){ qadd('ERROR','MISSING_SIDE',rowNo,recordLabel,'side','Row excluded: eye side is required.'); continue; }
+    if(!sdate){ qadd('ERROR','MISSING_OR_INVALID_SURGERY_DATE',rowNo,recordLabel,'surgery_date','Row excluded: a valid surgery date is required.'); continue; }
+    if(String(pid).trim().toUpperCase().startsWith('EXAMPLE')){ qadd('INFO','TEMPLATE_EXAMPLE_SKIPPED',rowNo,recordLabel,'patient_id','Template example row skipped.'); continue; }
+
+    const sideNorm=String(side).trim().toUpperCase();
+    if(!['OD','OS'].includes(sideNorm)) qadd('ERROR','INVALID_SIDE',rowNo,recordLabel,'side',`Expected OD or OS; found "${side}".`);
+    const ageRaw=num(get(r,'age_years'));
+    if(ageRaw!==null&&(ageRaw<10||ageRaw>99)) qadd('WARNING','AGE_OUTSIDE_PLAUSIBLE_RANGE',rowNo,recordLabel,'age_years',`Age ${ageRaw} is outside the configured 10–99 year range.`);
+    if(get(r,'tx_target_se')===null||get(r,'tx_target_se')==='') qadd('WARNING','TARGET_SE_MISSING_ASSUMED_ZERO',rowNo,recordLabel,'tx_target_se','Target SEQ is blank; Analyzer assumes 0.00 D.');
+
+    const rawAxisCheck=(prefix,label)=>{
+      const C=num(get(r,`${prefix}_C`)), A=num(get(r,`${prefix}_A`));
+      if(A!==null&&(A<0||A>180)) qadd('ERROR','AXIS_OUT_OF_RANGE',rowNo,recordLabel,`${prefix}_A`,`${label} axis ${A}° is outside 0–180°.`);
+      if(C!==null&&Math.abs(C)>1e-12&&A===null) qadd('WARNING','NONZERO_CYLINDER_MISSING_AXIS',rowNo,recordLabel,`${prefix}_A`,`${label} cylinder is non-zero but axis is missing; affected vector calculations will exclude this record.`);
+    };
+    rawAxisCheck('pre','Pre-op');
+    rawAxisCheck('tx','Treatment');
+    const tc=num(get(r,'tx_target_C')), ta=num(get(r,'tx_target_A'));
+    if(ta!==null&&(ta<0||ta>180)) qadd('ERROR','AXIS_OUT_OF_RANGE',rowNo,recordLabel,'tx_target_A',`Target cylinder axis ${ta}° is outside 0–180°.`);
+    if(tc!==null&&Math.abs(tc)>1e-12&&ta===null) qadd('WARNING','NONZERO_TARGET_CYLINDER_MISSING_AXIS',rowNo,recordLabel,'tx_target_A','Target cylinder is non-zero but target axis is missing; generalized Alpins analysis will exclude this eye.');
+
+    for(const V of VISITS){
+      const rc=num(get(r,`${V.k}_C`)), ra=num(get(r,`${V.k}_A`)), rd=excelDate(get(r,`${V.k}_date`));
+      if(ra!==null&&(ra<0||ra>180)) qadd('ERROR','AXIS_OUT_OF_RANGE',rowNo,recordLabel,`${V.k}_A`,`${V.en} axis ${ra}° is outside 0–180°.`);
+      if(rc!==null&&Math.abs(rc)>1e-12&&ra===null) qadd('WARNING','NONZERO_CYLINDER_MISSING_AXIS',rowNo,recordLabel,`${V.k}_A`,`${V.en} cylinder is non-zero but axis is missing; affected vector calculations will exclude this visit.`);
+      if(rd&&rd<sdate) qadd('ERROR','VISIT_BEFORE_SURGERY',rowNo,recordLabel,`${V.k}_date`,`${V.en} date occurs before surgery date.`);
+    }
+    const enhRaw=excelDate(get(r,'enh_date'));
+    if(enhRaw&&enhRaw<sdate) qadd('ERROR','ENHANCEMENT_BEFORE_SURGERY',rowNo,recordLabel,'enh_date','Enhancement date occurs before surgery date.');
+
+    for(const fld of ['pre_S','pre_C','tx_S','tx_C']){
+      const z=num(get(r,fld));
+      if(z!==null&&Math.abs(z)>20) qadd('WARNING','REFRACTION_OUTSIDE_PLAUSIBLE_RANGE',rowNo,recordLabel,fld,`${fld}=${z} D is outside ±20 D.`);
+    }
+
     const pre = refr(get(r,'pre_S'),get(r,'pre_C'),get(r,'pre_A'));
-    if(pre.S===null) continue;
+    if(pre.S===null){ qadd('ERROR','MISSING_PRE_S',rowNo,recordLabel,'pre_S','Row excluded: pre_S is required.'); continue; }
     const tx  = refr(get(r,'tx_S'),get(r,'tx_C'),get(r,'tx_A'));
     const targetSE = num(get(r,'tx_target_se')) ?? 0;
     const rawTargetC = num(get(r,'tx_target_C')) ?? 0, rawTargetA = num(get(r,'tx_target_A'));
@@ -941,6 +1040,16 @@ function parseWorkbook(wb){
     eyes.push(e);
   }
   if(!eyes.length) throw new Error('The file was read but no complete rows were found.\nEach row needs at least a patient ID, eye, surgery date and pre-op refraction.');
+
+  for(const [rid,n] of rawRecordCounts.entries()){
+    if(n>1) qadd('WARNING','DUPLICATE_RECORD_ID',null,rid,'record_id',`record_id appears ${n} times; verify that records are intentionally distinct.`);
+  }
+  const eyeCounts=new Map();
+  eyes.forEach(e=>eyeCounts.set(e.id,(eyeCounts.get(e.id)||0)+1));
+  for(const [eid,n] of eyeCounts.entries()){
+    if(n>1) qadd('WARNING','DUPLICATE_EYE_IDENTITY',null,eid,'patient_id + side',`Patient + side identity appears ${n} times; paired and eye-level analyses may be ambiguous.`);
+  }
+
   /* Schema migration for research v3: older workbooks remain readable, while the
      two optional target-cylinder fields are appended so edits can round-trip. */
   const dataRows = rows.slice(keyRow+1).map(r=>r.slice());
@@ -950,7 +1059,7 @@ function parseWorkbook(wb){
       keys.push(k); dataRows.forEach(r=>r.push(null)); headRows.forEach(r=>r.push(null));
     }
   }
-  return {eyes, settings, src:{keys, head:headRows, rows:dataRows}};
+  return {eyes, settings, qc, src:{keys, head:headRows, rows:dataRows}};
 }
 
 /* ============================================================
@@ -1042,6 +1151,8 @@ function demoData(){
    ============================================================ */
 const state = {
   raw:[], settings:null, fileName:'', pending:null, src:null, dirty:false,
+  modifiedSinceImport:false,
+  datasetHash:'', fileSize:null, qc:[], loadedAt:'',
   visit:'m3',
   proc:'all', surgeon:'all', site:'all', eye:'all', range:'all', studyEye:'seeded', studySeed:'ROA-2026',
   oExclude:true, oEnh:true, oCx:false, oWindow:true
@@ -1984,6 +2095,12 @@ function renderTables(co){
     </tbody></table></div>
     <div class="note" style="padding:10px 0">Below about 80% follow-up, results read better than reality — unhappy patients are the ones who stop coming back.</div>`;
 
+  const audit=auditTrail(co);
+  h += `<div class="tcap">6 · Analysis audit trail</div><div class="tablewrap"><table><tbody>
+    ${audit.map(r=>`<tr><td>${esc(r.item)}</td><td class="num" style="overflow-wrap:anywhere">${esc(r.value)}</td></tr>`).join('')}
+    </tbody></table></div>
+    <div class="note" style="padding:10px 0">The source XLSX SHA-256 fingerprint identifies the exact imported file. “Working data modified since import” is a sticky audit flag: it remains YES after Save XLSX or cloud sync and resets only when a new dataset is imported. Export the audit CSV with study outputs to support reproducibility.</div>`;
+
   $('#gTab').innerHTML = h;
 }
 
@@ -2200,6 +2317,79 @@ function showScreen(which){
   window.scrollTo(0,0);
 }
 
+
+/* ---------- QC report + audit trail ---------- */
+function csvCell(v){
+  if(v===null||v===undefined)return '';
+  const s=String(v);
+  return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;
+}
+function downloadRows(rows,filename){
+  if(!rows||!rows.length)return;
+  const cols=[...new Set(rows.flatMap(r=>Object.keys(r)))];
+  const csv=[cols.map(csvCell).join(',')].concat(rows.map(r=>cols.map(c=>csvCell(r[c])).join(','))).join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}));
+  a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+}
+function currentQc(){
+  return (state.raw.length?state.qc:(state.pending&&state.pending.parsed&&state.pending.parsed.qc)||[])||[];
+}
+function exportQcCsv(){
+  const q=currentQc();
+  downloadRows(q.length?q:[{severity:'INFO',code:'NO_QC_ISSUES',row:'',record:'',field:'',message:'No QC issues were detected.'}],
+               'refractive_outcomes_QC_report.csv');
+}
+function auditTrail(co=cohort()){
+  const V=VISITS.find(v=>v.k===state.visit), now=new Date();
+  const [lo,hi]=visitWindow(state.visit);
+  return [
+    {item:'Analyzer version',value:APP_VERSION},
+    {item:'Audit generated',value:now.toISOString()},
+    {item:'Dataset filename',value:state.fileName||''},
+    {item:'Source XLSX SHA-256',value:state.datasetHash||'Unavailable / in-memory dataset'},
+    {item:'Source XLSX file size (bytes)',value:state.fileSize??''},
+    {item:'Working data modified since import',value:state.modifiedSinceImport?'YES':'NO'},
+    {item:'Unsaved / unsynced working changes',value:state.dirty?'YES':'NO'},
+    {item:'Dataset loaded',value:state.loadedAt||''},
+    {item:'Imported eyes',value:state.raw.length},
+    {item:'Imported patients',value:new Set(state.raw.map(e=>e.patient)).size},
+    {item:'Analysis visit',value:V?V.en:state.visit},
+    {item:'Procedure filter',value:state.proc},
+    {item:'Surgeon filter',value:state.surgeon},
+    {item:'Site filter',value:state.site},
+    {item:'Eye filter',value:state.eye},
+    {item:'Refractive range filter',value:state.range},
+    {item:'Research study-eye rule',value:state.studyEye},
+    {item:'Research seed',value:state.studySeed},
+    {item:'Drop Exclude eyes',value:state.oExclude?'ON':'OFF'},
+    {item:'Censor after enhancement',value:state.oEnh?'ON':'OFF'},
+    {item:'Drop any complication',value:state.oCx?'ON':'OFF'},
+    {item:'Visit window',value:state.oWindow?`ON (${lo}–${hi} days)`:'OFF'},
+    {item:'Analyzed eyes',value:co.length},
+    {item:'Analyzed patients',value:new Set(co.map(e=>e.patient)).size},
+    {item:'VA notation',value:(state.settings&&state.settings.va_notation)||''},
+    {item:'Cylinder convention',value:(state.settings&&state.settings.cyl_convention)||''},
+    {item:'Clinic',value:(state.settings&&state.settings.clinic)||''},
+    {item:'QC errors',value:state.qc.filter(x=>x.severity==='ERROR').length},
+    {item:'QC warnings',value:state.qc.filter(x=>x.severity==='WARNING').length},
+    {item:'QC information',value:state.qc.filter(x=>x.severity==='INFO').length}
+  ];
+}
+function exportAuditCsv(){downloadRows(auditTrail(),'refractive_outcomes_analysis_audit.csv');}
+function qcHtml(q){
+  const counts={ERROR:0,WARNING:0,INFO:0};
+  q.forEach(x=>{if(counts[x.severity]!==undefined)counts[x.severity]++;});
+  const cls=counts.ERROR?'err':counts.WARNING?'banner warn':'banner';
+  const top=q.slice(0,12);
+  return `<div class="${cls}" style="margin-top:12px"><b>Import QC:</b> ${counts.ERROR} error(s) · ${counts.WARNING} warning(s) · ${counts.INFO} information item(s). `+
+    `QC flags do not silently modify calculation values.</div>`+
+    (top.length?`<div class="tablewrap" style="margin-top:8px"><table><thead><tr><th>Severity</th><th>Row</th><th>Record</th><th>Field</th><th>Issue</th></tr></thead><tbody>`+
+      top.map(x=>`<tr><td>${esc(x.severity)}</td><td class="num">${x.row??''}</td><td>${esc(x.record||'')}</td><td>${esc(x.field||'')}</td><td>${esc(x.message)}</td></tr>`).join('')+
+      `</tbody></table></div>`:'<div class="note" style="padding:8px 0">No QC issues detected.</div>')+
+    (q.length>12?`<div class="note" style="padding:6px 0">${q.length-12} additional issue(s) are included in the exported QC CSV.</div>`:'');
+}
+
 function stage(parsed, name){
   state.pending = {parsed, name};
   const eyes = parsed.eyes, S = parsed.settings;
@@ -2219,6 +2409,7 @@ function stage(parsed, name){
   $('#readyName').textContent = name;
   $('#readyStats').innerHTML =
     stat('Eyes', eyes.length, `${new Set(eyes.map(e=>e.patient)).size} patients`) +
+    stat('Dataset SHA-256', parsed.datasetHash ? parsed.datasetHash.slice(0,16)+'…' : 'Unavailable', parsed.datasetHash?'Full fingerprint is recorded in the audit trail':'In-memory/demo dataset') +
     stat('Procedures', procs.length, procs.join(' · ')) +
     stat('Surgeons', new Set(eyes.map(e=>e.surgeon)).size, `${new Set(eyes.map(e=>e.site)).size} site(s)`) +
     stat('Surgery dates', dates.length? ym(dates[0]) : '-',
@@ -2249,6 +2440,7 @@ function stage(parsed, name){
     ? `Acuity read as ${S.va_notation} as set on the Settings sheet`
     : 'No acuity notation set on the Settings sheet — values are auto-detected, which can misread decimal vs logMAR']);
   $('#readyChecks').innerHTML = chk.map(([ok,t])=>`<li class="${ok?'ok':'warn'}">${esc(t)}</li>`).join('');
+  $('#readyQc').innerHTML = qcHtml(parsed.qc||[]);
 
   const best = ['m3','m12','m6','m1','w1','d1'].find(k=>has(k)>=Math.max(3,eyes.length*0.3))
             || ['m12','m6','m3','m1','w1','d1'].find(k=>has(k)) || 'm3';
@@ -2265,13 +2457,16 @@ function analyze(){
   if(!state.pending) return;
   const {parsed, name} = state.pending;
   state.raw = parsed.eyes; state.settings = parsed.settings; state.fileName = name;
-  state.src = parsed.src || null; state.dirty = false;
+  state.src = parsed.src || null; state.dirty = false; state.modifiedSinceImport = false;
+  state.datasetHash = parsed.datasetHash||''; state.fileSize = parsed.fileSize??null;
+  state.qc = parsed.qc||[]; state.loadedAt = new Date().toISOString();
   entry.values = {tx_target_se:'0', tx_target_C:'0', include_flag:'Include', enh_flag:'No', tx_intraop_cx:'None'};
   entry.errors = {}; entry.msg = ''; entry.mode = 'new'; entry.record = '';
   ui.zoom = {}; ui.hidden = new Set(); ui.sel = null; ui.search = ''; ui.sortCol = null;
   state.visit = $('#readyVisit').value || 'm3';
   $('#filechip').textContent = `${name} · ${parsed.eyes.length} eyes · acuity ${parsed.settings.va_notation}` +
-    (parsed.settings.clinic ? ' · '+parsed.settings.clinic : '');
+    (parsed.settings.clinic ? ' · '+parsed.settings.clinic : '') +
+    (parsed.datasetHash ? ` · SHA256 ${parsed.datasetHash.slice(0,10)}…` : '');
   showScreen('analysis'); fillFilters(); render();
 }
 
@@ -2282,9 +2477,14 @@ function resetUpload(){
 function readFile(f){
   $('#err').innerHTML = '';
   const fr = new FileReader();
-  fr.onload = ev => {
-    try{ stage(parseWorkbook(XLSX.read(new Uint8Array(ev.target.result),{type:'array'})), f.name); }
-    catch(err){ resetUpload(); $('#err').innerHTML = `<div class="err"><b>Could not read this file</b>\n${esc(err.message||err)}</div>`; }
+  fr.onload = async ev => {
+    try{
+      const buffer=ev.target.result;
+      const parsed=parseWorkbook(XLSX.read(new Uint8Array(buffer),{type:'array'}));
+      parsed.datasetHash=await sha256Hex(buffer);
+      parsed.fileSize=f.size;
+      stage(parsed, f.name);
+    }catch(err){ resetUpload(); $('#err').innerHTML = `<div class="err"><b>Could not read this file</b>\n${esc(err.message||err)}</div>`; }
   };
   fr.onerror = () => $('#err').innerHTML = `<div class="err">The file could not be opened. Re-save it as .xlsx and try again.</div>`;
   fr.readAsArrayBuffer(f);
@@ -2423,23 +2623,20 @@ function wire(){
     if(el.id==='entrySaveFile'){ saveDataFile(); return; }
     if(el.id==='entrySave'){ saveEntry(); return; }
     const vp = el.closest && el.closest('[data-vpick]');
-    if(vp){ entry.visit = vp.getAttribute('data-vpick');
-      const ee2 = state.raw.find(x=>x.id===entry.record), vv = ee2 && ee2.visits[entry.visit];
-      entry.values = vv ? {_record:entry.record, _visit:entry.visit, _date:isoDate(vv.date), _S:vv.S, _C:vv.C,
-                           _A:vv.A, _udva:vv.rawU||'', _cdva:vv.rawC||'', _cx:vv.cx}
-                        : {_record:entry.record, _visit:entry.visit,
-                           _date: ee2 ? nominalDate(ee2.sdate, entry.visit) : ''};
-      entry.errors={}; renderEntry(); return; }
+    if(vp){
+      entry.visit = vp.getAttribute('data-vpick');
+      const ee2 = state.raw.find(x=>x.id===entry.record);
+      entry.values = ee2 ? visitFormValues(ee2, entry.visit)
+                         : {_record:entry.record, _visit:entry.visit, _cx:'None', _comments:''};
+      entry.errors={}; renderEntry(); return;
+    }
     const pr = el.closest && el.closest('[data-pickrec]');
     if(pr){
       entry.record = pr.getAttribute('data-pickrec');
       const pe = state.raw.find(x=>x.id===entry.record);
       if(entry.mode==='edit'){ loadEyeIntoForm(entry.record); return; }
-      const pv = pe && pe.visits[entry.visit];
-      entry.values = pv ? {_record:entry.record, _visit:entry.visit, _date:isoDate(pv.date), _S:pv.S, _C:pv.C,
-                           _A:pv.A, _udva:pv.rawU||'', _cdva:pv.rawC||'', _cx:pv.cx}
-                        : {_record:entry.record, _visit:entry.visit,
-                           _date: pe ? nominalDate(pe.sdate, entry.visit) : ''};
+      entry.values = pe ? visitFormValues(pe, entry.visit)
+                        : {_record:entry.record, _visit:entry.visit, _cx:'None', _comments:''};
       entry.errors={}; renderEntry(); return;
     }
     const dl = el.closest && el.closest('[data-del]');
@@ -2502,9 +2699,8 @@ function wire(){
         if(entry.mode==='edit' && f==='_record'){ loadEyeIntoForm(ev.target.value); return; }
         if(entry.mode==='followup'){
           entry.visit = entry.values._visit || entry.visit;
-          const e = state.raw.find(x=>x.id===entry.record), v = e && e.visits[entry.visit];
-          if(v) Object.assign(entry.values, {_date:isoDate(v.date), _S:v.S, _C:v.C, _A:v.A,
-            _udva:v.rawU||'', _cdva:v.rawC||'', _cx:v.cx});
+          const e = state.raw.find(x=>x.id===entry.record);
+          if(e) entry.values = visitFormValues(e, entry.visit);
         }
         renderEntry();
       }
@@ -2543,8 +2739,11 @@ function bindPills(sel, key){
 document.addEventListener('DOMContentLoaded', () => {
   $('#btnPick').onclick = () => $('#file').click();
   $('#file').onchange = e => { if(e.target.files[0]) readFile(e.target.files[0]); };
-  $('#btnDemo2').onclick = () => stage(demoData(), 'Sample dataset (240 simulated eyes)');
+  $('#btnDemo2').onclick = () => { const d=demoData(); d.qc=d.qc||[]; d.datasetHash=''; d.fileSize=null; stage(d, 'Sample dataset (240 simulated eyes)'); };
   $('#btnCsv').onclick = exportCsv;
+  $('#btnQc').onclick = exportQcCsv;
+  $('#btnQcReady').onclick = exportQcCsv;
+  $('#btnAudit').onclick = exportAuditCsv;
   $('#btnSaveFile').onclick = saveDataFile;
   $('#btnNew').onclick = startEmpty;
   $('#btnTpl').onclick = downloadTemplate;
@@ -2841,6 +3040,8 @@ function fieldHtml(f, key, val, listVals){
       ${f.min!==undefined?`min="${f.min}"`:''} ${f.max!==undefined?`max="${f.max}"`:''}
       ${listVals?`list="dl_${f.from}"`:''}>`;
   }
+  else if(f.wide)
+    input = `<textarea id="${id}" data-f="${key}" rows="3" ${listVals?`list="dl_${f.from}"`:''}>${esc(val??'')}</textarea>`;
   else
     input = `<input type="text" id="${id}" data-f="${key}" value="${esc(val??'')}" ${listVals?`list="dl_${f.from}"`:''}>`;
   return `<div class="ff ${f.wide?'wide':''} ${err?'bad':''}">
@@ -3113,14 +3314,14 @@ function saveEntry(){
     ['date','days','S','C','A'].forEach(k=>setCell(e, `${code}_${k}`, v[k]));
     setCell(e, `${code}_udva`, v.rawU); setCell(e, `${code}_cdva`, v.rawC);
     setCell(e, `${code}_cx`, v.cx); setCell(e, `${code}_comments`, v.comments||null);
-    state.dirty = true;
+    state.dirty = true; state.modifiedSinceImport = true;
     if(!state.raw.some(x=>x.visits[state.visit])) state.visit = code;
     entry.visit = code;
     const at = VISITS.findIndex(x=>x.k===code);
     const next = VISITS.slice(at+1).find(x=>!e.visits[x.k]) || VISITS.find(x=>!e.visits[x.k]);
     if(next){ entry.visit = next.k;
-      entry.values = {_record:e.id, _visit:next.k, _date:nominalDate(e.sdate, next.k), _cx:'None'}; }
-    else entry.values = {_record:e.id, _visit:code, _cx:'None'};
+      entry.values = visitFormValues(e, next.k); }
+    else entry.values = visitFormValues(e, code);
     entry.msg = savedMsg(e, `${isNew?'Added':'Updated'} the ${VISITS.find(x=>x.k===code).en} visit for`);
     if(typeof autoSync==='function') autoSync(e);
     entry.msg.actions = next ? [{label:`Next: ${next.en} visit`, act:`visit:${e.id}:${next.k}`}] : [];
@@ -3147,7 +3348,11 @@ function saveEntry(){
   const id = `${String(vals.patient_id||'').trim()}-${vals.side}`;
   const existing = state.raw.find(x=>x.id===id);
   if(entry.mode==='new' && existing) E.patient_id = 'That patient ID and eye already exist';
-  if(entry.mode==='edit' && !state.raw.find(x=>x.id===entry.record)) E._record = 'Choose an eye';
+  if(entry.mode==='edit'){
+    const original = state.raw.find(x=>x.id===entry.record);
+    if(!original) E._record = 'Choose an eye';
+    else if(id!==entry.record && existing && existing!==original) E.patient_id = 'That patient ID and eye already exist';
+  }
   if(Object.keys(E).length){ renderEntry(); return; }
 
   const N = state.settings.va_notation;
@@ -3194,7 +3399,7 @@ function saveEntry(){
     state.raw.push(e);
   } else ensureSrc();
   writeEye(e);
-  state.dirty = true;
+  state.dirty = true; state.modifiedSinceImport = true;
   entry.msg = savedMsg(e, entry.mode==='new'?'Added':'Updated');
   if(entry.mode==='new') entry.lastSite = e.site;
   if(typeof autoSync==='function') autoSync(e);
@@ -3217,20 +3422,38 @@ function deleteVisit(id, code){
   delete e.visits[code];
   ensureSrc();
   ['date','days','S','C','A','udva','cdva','cx','comments'].forEach(k=>setCell(e, `${code}_${k}`, null));
-  state.dirty = true;
+  state.dirty = true; state.modifiedSinceImport = true;
   entry.values = {_record:id, _visit:code};
   entry.msg = {text:`Deleted the ${VISITS.find(v=>v.k===code).en} visit for ${id}`, bad:true};
   if(typeof autoSync==='function') autoSync(e);
   fillFilters(); render();
 }
 
+function visitFormValues(e, code){
+  const v = e && e.visits ? e.visits[code] : null;
+  if(!v) return {_record:e?e.id:'', _visit:code, _date:e?nominalDate(e.sdate, code):'', _cx:'None', _comments:''};
+  return {
+    _record:e.id, _visit:code, _date:isoDate(v.date),
+    _S:v.S, _C:v.C, _A:v.A,
+    _udva:v.rawU||'', _cdva:v.rawC||'',
+    _cx:v.cx||'None', _comments:v.comments||''
+  };
+}
+
+function followupRoundTripSelfCheck(){
+  const fake={id:'SELFTEST-OD',sdate:utcDay(2026,0,1),visits:{m3:{
+    code:'m3',date:utcDay(2026,3,1),S:-1.25,C:-0.50,A:90,
+    rawU:'20/20',rawC:'20/16',cx:'Dry eye',comments:'ROUNDTRIP_NOTE_TEST'
+  }}};
+  const x=visitFormValues(fake,'m3');
+  return x._date==='2026-04-01' && x._S===-1.25 && x._C===-0.50 && x._A===90 &&
+         x._udva==='20/20' && x._cdva==='20/16' && x._cx==='Dry eye' &&
+         x._comments==='ROUNDTRIP_NOTE_TEST';
+}
 function loadVisitIntoForm(id, code){
   const e = state.raw.find(x=>x.id===id); if(!e) return;
-  const v = e.visits[code];
   entry.mode='followup'; entry.record=id; entry.visit=code; entry.errors={}; entry.msg='';
-  entry.values = v ? {_record:id, _visit:code, _date:isoDate(v.date), _S:v.S, _C:v.C, _A:v.A,
-                      _udva:v.rawU||'', _cdva:v.rawC||'', _cx:v.cx, _comments:v.comments||''}
-                   : {_record:id, _visit:code, _date:nominalDate(e.sdate, code)};
+  entry.values = visitFormValues(e, code);
   showTab('ent'); renderEntry();
 }
 
@@ -3302,7 +3525,7 @@ function updateDirty(){
 }
 
 function startEmpty(){
-  state.raw = []; state.src = null; state.dirty = false; state.fileName = 'new_dataset';
+  state.raw = []; state.src = null; state.dirty = false; state.modifiedSinceImport = false; state.fileName = 'new_dataset';
   state.settings = {va_notation:'Snellen', cyl_convention:'Minus', vertex:12, clinic:'', version:'v4.0'};
   ui.zoom={}; ui.hidden=new Set(); ui.sel=null;
   entry.mode='new'; entry.values=blankEye();
