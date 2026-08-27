@@ -613,7 +613,7 @@ th .qm{background:#CFD0D2;color:#3C3F44}
    ============================================================ */
 'use strict';
 
-const APP_VERSION = 'Research v4.15-dev3';
+const APP_VERSION = 'Research v4.15';
 
 const VISITS = [
   {k:'d1',  label:'1 day',     en:'1 Day',    days:1},
@@ -734,11 +734,24 @@ function vaToLogMAR(raw, notation){
   const low = {'NLP':3.0,'LP':2.7,'HM':2.3,'CF':1.9};
   if(low[s]!==undefined) return low[s];
   s = s.replace(/[−–]/g,'-');
-  if(s.includes('/')){
-    const [a,b] = s.split('/').map(parseFloat);
+
+  /* ETDRS-style letter adjustment for Snellen entries such as 20/20+2 or
+     20/15-1. Five letters = one 0.1-logMAR line, therefore each correctly
+     gained letter improves logMAR by 0.02 and each missed letter worsens it
+     by 0.02. The original raw VA string is retained in the dataset. */
+  const sm = s.match(/^(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)(?:([+-])(\d+))?$/);
+  if(sm){
+    const a=parseFloat(sm[1]), b=parseFloat(sm[2]);
     if(!isFinite(a)||!isFinite(b)||a<=0||b<=0) return null;
-    return Math.log10(b/a);
+    let lm=Math.log10(b/a);
+    if(sm[3] && sm[4]){
+      const letters=parseInt(sm[4],10);
+      if(isFinite(letters)) lm += (sm[3]==='+' ? -1 : 1) * letters * 0.02;
+    }
+    return lm;
   }
+  if(s.includes('/')) return null; // malformed fraction: do not silently partially parse it
+
   const v = parseFloat(s);
   if(!isFinite(v)) return null;
   if(notation==='Decimal') return v>0 ? -Math.log10(v) : null;
