@@ -106,6 +106,7 @@ button{font-family:inherit;font-size:inherit;cursor:pointer}
 .up-head h1{font-family:var(--cond);font-size:34px;letter-spacing:.01em;text-transform:uppercase;margin-top:14px;color:#fff}
 .up-head p{color:#B9BBBF;max-width:640px;margin:8px 0 0;font-size:15px}
 .up-body{max-width:1020px;margin:26px auto 60px;padding:0 24px;width:100%;display:flex;flex-direction:column;gap:14px}
+.workspace-account{background:#fff;border:1px solid var(--rule);border-top:3px solid var(--teal);padding:12px 16px;display:flex;gap:14px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}.workspace-account .acct-main{min-width:220px;flex:1}.workspace-account .acct-title{font-family:var(--cond);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}.workspace-account .acct-who{font-family:var(--mono);font-size:12px;margin-top:4px;color:var(--ink)}.workspace-account .cl-note{margin-top:8px}.workspace-account .acct-actions{display:flex;gap:8px;align-items:center}.btn-danger-lite{background:#fff;color:#8A1C22;border-color:#D9A4A7}.btn-danger-lite:hover{background:#FBEAEB;color:#8A1C22}
 .up-body.cloud-first .cloudbox{order:-1;margin:0;border-top:4px solid var(--teal);padding:22px 26px 20px;
   box-shadow:0 8px 26px rgba(0,0,0,.10)}
 .up-body.cloud-first .cloudbox h4{font-size:14px;color:var(--text)}
@@ -432,6 +433,14 @@ th .qm{background:#CFD0D2;color:#3C3F44}
     <p>Load a corneal laser vision correction dataset and get the full standard graph set, Alpins vector analysis and subgroup audit — computed entirely in this browser.</p>
   </div>
   <div class="up-body">
+    <div class="workspace-account" id="uploadAccountPanel">
+      <div class="acct-main">
+        <div class="acct-title">Account & Database Access</div>
+        <div class="acct-who" id="uploadAccountWho"></div>
+        <div id="uploadAccessDetails"></div>
+      </div>
+      <div class="acct-actions"><button class="btn btn-light btn-sm" id="btnLogoutUpload">Log out</button></div>
+    </div>
     <div class="drop" id="drop">
       <h2>Drop your data file here</h2>
       <p>Built for the Refractive Outcomes Data Template v2 (.xlsx). Nothing is uploaded — the file is read locally by this page.</p>
@@ -506,6 +515,7 @@ th .qm{background:#CFD0D2;color:#3C3F44}
       <span class="filechip" id="filechip"></span>
       <div class="rail-actions">
         <button class="btn btn-sm" id="btnBack">Change file</button>
+        <button class="btn btn-sm" id="btnLogoutMain">Log out</button>
         <span id="cloudChip" hidden></span>
         <button class="btn btn-sm" id="btnCloudSync" hidden>Sync to database</button>
         <button class="btn btn-sm" id="btnSaveFile" hidden>Save data file</button>
@@ -603,7 +613,7 @@ th .qm{background:#CFD0D2;color:#3C3F44}
    ============================================================ */
 'use strict';
 
-const APP_VERSION = 'Research v4.15-dev2';
+const APP_VERSION = 'Research v4.15-dev3';
 
 const VISITS = [
   {k:'d1',  label:'1 day',     en:'1 Day',    days:1},
@@ -2784,6 +2794,8 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('beforeunload', ev=>{ if(state.dirty){ ev.preventDefault(); ev.returnValue=''; } });
   $('#btnPrint').onclick = () => window.print();
   $('#btnBack').onclick = () => showScreen('upload');
+  $('#btnLogoutUpload').onclick = () => cloudSignOut();
+  $('#btnLogoutMain').onclick = () => cloudSignOut();
   $('#btnResume').onclick = () => showScreen('analysis');
   $('#btnAnalyze').onclick = analyze;
   $('#btnOther').onclick = resetUpload;
@@ -3896,7 +3908,9 @@ This cannot be undone from the app.`)
       cloud.msg = `Cleared ${n} eye record(s) from ${code}. The audit log has the full history.`;
     } else cloud.msg = 'Nothing deleted.';
   }catch(err){ cloud.msg = 'Clear failed: '+String(err.message||err); }
-  cloud.busy=false; renderCloud();
+  cloud.busy=false;
+  await cloudRefreshSites();
+  renderCloud();
 }
 
 /* which sites may this account write to? */
@@ -3968,6 +3982,22 @@ function renderCloud(){
   renderLogin();
   const box = document.querySelector('#cloudBox');
   if(box){ box.hidden = true; box.innerHTML = ''; box.setAttribute('aria-hidden','true'); }
+
+  const upPanel=document.querySelector('#uploadAccountPanel');
+  const upWho=document.querySelector('#uploadAccountWho');
+  const upAccess=document.querySelector('#uploadAccessDetails');
+  if(upPanel){
+    upPanel.hidden=!authReady();
+    if(authReady()){
+      if(upWho) upWho.textContent = `${cloud.user.email} · ${cloud.profile.role}` +
+        (cloud.profile.sites ? ` · ${cloud.profile.sites.code||cloud.profile.sites.name||''}` : '');
+      if(upAccess) upAccess.innerHTML = accessListHtml(cloud.profile) +
+        (cloud.msg ? `<div class="login-msg" style="margin-top:8px">${esc(cloud.msg)}</div>` : '');
+    } else {
+      if(upWho) upWho.textContent='';
+      if(upAccess) upAccess.innerHTML='';
+    }
+  }
 
   const chip = document.querySelector('#cloudChip');
   const syncBtn = document.querySelector('#btnCloudSync');
