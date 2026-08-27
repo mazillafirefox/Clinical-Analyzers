@@ -441,7 +441,7 @@ th .qm{background:#CFD0D2;color:#3C3F44}
       <button class="btn btn-light" id="btnNew">Start an empty dataset</button>
       <button class="btn btn-light" id="btnResume" hidden>Back to current dataset</button>
     </div>
-    <div class="cloudbox" id="cloudBox" hidden></div>
+    <div class="cloudbox" id="cloudBox" hidden aria-hidden="true"></div>
     <div hidden>
       <input type="file" id="file" accept=".xlsx,.xls" hidden>
     </div>
@@ -603,7 +603,7 @@ th .qm{background:#CFD0D2;color:#3C3F44}
    ============================================================ */
 'use strict';
 
-const APP_VERSION = 'Research v4.15-dev1';
+const APP_VERSION = 'Research v4.15-dev2';
 
 const VISITS = [
   {k:'d1',  label:'1 day',     en:'1 Day',    days:1},
@@ -2313,6 +2313,7 @@ function fillFilters(){
 }
 
 function showTab(p){
+  if(!authReady()){ cloud.msg='Please sign in before accessing the workspace.'; showScreen('login'); renderCloud(); return; }
   $$('.tab').forEach(x=>x.setAttribute('aria-selected', x.dataset.p===p));
   $$('.panel').forEach(s=>s.hidden = (s.id !== 'p-'+p));
 }
@@ -2405,6 +2406,7 @@ function qcHtml(q){
 }
 
 function stage(parsed, name){
+  if(!authReady()){ cloud.msg='Please sign in before loading data.'; showScreen('login'); renderCloud(); return; }
   state.pending = {parsed, name};
   const eyes = parsed.eyes, S = parsed.settings;
   const has = k => eyes.filter(e=>e.visits[k]).length;
@@ -2468,6 +2470,7 @@ function stage(parsed, name){
 }
 
 function analyze(){
+  if(!authReady()){ cloud.msg='Please sign in before starting analysis.'; showScreen('login'); renderCloud(); return; }
   if(!state.pending) return;
   const {parsed, name} = state.pending;
   state.raw = parsed.eyes; state.settings = parsed.settings; state.fileName = name;
@@ -2489,6 +2492,7 @@ function resetUpload(){
 }
 
 function readFile(f){
+  if(!authReady()){ cloud.msg='Please sign in before choosing a data file.'; showScreen('login'); renderCloud(); return; }
   $('#err').innerHTML = '';
   const fr = new FileReader();
   fr.onload = async ev => {
@@ -2763,7 +2767,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#btnTpl').onclick = downloadTemplate;
   $('#btnCloudSync').onclick = () => cloudSync();
   document.addEventListener('click', ev=>{
-    if(ev.target.id==='clConnect') cloudConnect($('#clUrl').value, $('#clKey').value, $('#clRemember').checked);
+    if(ev.target.id==='clConnect'){ const root=ev.target.closest('#screen-login')||document; cloudConnect(root.querySelector('#clUrl')?.value, root.querySelector('#clKey')?.value, !!root.querySelector('#clRemember')?.checked); }
     if(ev.target.id==='clChange') cloudDisconnect();
     const cs = ev.target.closest && ev.target.closest('[data-clsite]');
     if(cs){ const parts = cs.getAttribute('data-clsite').split('|'); cloudClearSite(parts[0], parts[1]); return; }
@@ -2771,7 +2775,7 @@ document.addEventListener('DOMContentLoaded', () => {
       cloudRefreshSites().then(err=>{ cloud.busy=false;
         cloud.msg = err ? 'Could not load sites: '+err.message : `${cloud.sites.length} site(s) on file.`;
         renderCloud(); renderEntry(); }); }
-    if(ev.target.id==='clIn') cloudSignIn($('#clEmail').value.trim(), $('#clPass').value);
+    if(ev.target.id==='clIn'){ const root=ev.target.closest('#screen-login')||document; cloudSignIn((root.querySelector('#clEmail')?.value||'').trim(), root.querySelector('#clPass')?.value||''); }
     if(ev.target.id==='clGoChoose' && authReady()) showScreen('upload');
     if(ev.target.id==='clOut') cloudSignOut();
     if(ev.target.id==='clOpen') cloudOpen();
@@ -3538,6 +3542,7 @@ function updateDirty(){
 }
 
 function startEmpty(){
+  if(!authReady()){ cloud.msg='Please sign in before creating a dataset.'; showScreen('login'); renderCloud(); return; }
   state.raw = []; state.src = null; state.dirty = false; state.modifiedSinceImport = false; state.fileName = 'new_dataset';
   state.settings = {va_notation:'Snellen', cyl_convention:'Minus', vertex:12, clinic:'', version:'v4.0'};
   ui.zoom={}; ui.hidden=new Set(); ui.sel=null;
@@ -3961,55 +3966,17 @@ function renderLogin(){
 }
 function renderCloud(){
   renderLogin();
-  const upBody = document.querySelector('.up-body');
-  if(upBody && upBody.classList){
-    if(cloud.profile) upBody.classList.add('cloud-first');
-    else upBody.classList.remove('cloud-first');
-  }
   const box = document.querySelector('#cloudBox');
+  if(box){ box.hidden = true; box.innerHTML = ''; box.setAttribute('aria-hidden','true'); }
+
   const chip = document.querySelector('#cloudChip');
   const syncBtn = document.querySelector('#btnCloudSync');
-  if(chip) chip.hidden = !(cloudConfigured() && cloud.profile);
-  if(chip && cloud.profile) chip.textContent = '☁ '+(cloud.profile.sites?.code || cloud.profile.role);
+  if(chip) chip.hidden = !(authReady());
+  if(chip && authReady()) chip.textContent = '☁ '+(cloud.profile.sites?.code || cloud.profile.role);
   if(syncBtn){
-    syncBtn.hidden = !(cloudConfigured() && cloud.profile && cloud.profile.role!=='viewer');
+    syncBtn.hidden = !(authReady() && cloud.profile.role!=='viewer');
     syncBtn.disabled = cloud.busy;
     syncBtn.textContent = cloud.busy ? 'Syncing…' : (state.dirty ? '● Sync to database' : 'Sync to database');
-  }
-  if(!box) return;
-  box.hidden = false;
-  if(!cloudConfigured()){
-    box.innerHTML = `<h4>Clinic database</h4>
-      <p class="cl-note">Optional — connect this app to your outcomes database (a separate Supabase project).
-      Copy both values from <b>Project Settings → API</b>. The anon key is the public one; your data stays protected by sign-in and row-level security.</p>
-      <div class="cl-row">
-        <input type="url" id="clUrl" placeholder="https://xxxx.supabase.co" style="min-width:250px">
-        <input type="text" id="clKey" placeholder="anon public key" style="min-width:250px">
-      </div>
-      <div class="cl-row" style="margin-top:8px">
-        <label class="cl-chk"><input type="checkbox" id="clRemember" checked> Remember on this device</label>
-        <button class="btn btn-light btn-sm" id="clConnect" ${cloud.busy?'disabled':''}>Connect</button>
-      </div>
-      ${cloud.msg?`<div class="cl-msg">${esc(cloud.msg)}</div>`:''}`;
-    return;
-  }
-  if(!cloud.user){
-    box.innerHTML = `<h4>Clinic database</h4>
-      <div class="cl-row"><input type="email" id="clEmail" placeholder="email" autocomplete="username">
-      <input type="password" id="clPass" placeholder="password" autocomplete="current-password">
-      <button class="btn btn-light btn-sm" id="clIn" ${cloud.busy?'disabled':''}>Sign in</button>
-      <button class="btn btn-light btn-sm" id="clChange" title="Use a different project">Change connection</button></div>
-      <div class="cl-note" style="margin-top:6px">Connected to ${esc(CLOUD.url.replace('https://',''))}</div>
-      ${cloud.msg?`<div class="cl-msg">${esc(cloud.msg)}</div>`:''}`;
-  } else {
-    const p = cloud.profile;
-    box.innerHTML = `<h4>Clinic database — signed in</h4>
-      <div class="cl-row"><span class="cl-who">${esc(cloud.user.email)} · ${p?esc(p.role + (p.sites?' · '+p.sites.name:'')):'no profile'}</span>
-      ${p?`<button class="btn btn-open" id="clOpen" ${cloud.busy?'disabled':''}>${cloud.busy?'Working…':'Open from database'}</button>`:''}
-      <button class="btn btn-light btn-sm" id="clOut">Sign out</button>
-      <button class="btn btn-light btn-sm" id="clChange" title="Disconnect and forget this project">Disconnect</button></div>
-      ${p?accessListHtml(p):''}
-      ${cloud.msg?`<div class="cl-msg">${esc(cloud.msg)}</div>`:''}`;
   }
 }
 </script>
